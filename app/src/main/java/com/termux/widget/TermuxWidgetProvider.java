@@ -330,7 +330,14 @@ public final class TermuxWidgetProvider extends AppWidgetProvider {
         // Create execution intent with the action TERMUX_SERVICE#ACTION_SERVICE_EXECUTE to be sent to the TERMUX_SERVICE
         executionCommand.executableUri = new Uri.Builder().scheme(TERMUX_SERVICE.URI_SCHEME_SERVICE_EXECUTE).path(executionCommand.executable).build();
         Intent executionIntent = new Intent(TERMUX_SERVICE.ACTION_SERVICE_EXECUTE, executionCommand.executableUri);
-        executionIntent.setClassName(TermuxConstants.TERMUX_PACKAGE_NAME, TermuxConstants.TERMUX_APP.TERMUX_SERVICE_NAME);
+        // nix-on-droid retargets the applicationId to "com.termux.nix" (via applicationIdSuffix) but keeps the
+        // manifest namespace / Java class package as "com.termux". As a result the TermuxService class is installed
+        // as "com.termux.app.TermuxService", not "com.termux.nix.app.TermuxService" that TermuxConstants derives
+        // from TERMUX_PACKAGE_NAME. Rewrite the class-name package prefix back to the namespace so the component
+        // resolves. The intent is still delivered to the installed package TERMUX_PACKAGE_NAME (com.termux.nix).
+        // See https://github.com/nix-community/nix-on-droid-app AndroidManifest package="com.termux".
+        String serviceClassName = getTermuxServiceClassName();
+        executionIntent.setClassName(TermuxConstants.TERMUX_PACKAGE_NAME, serviceClassName);
         executionIntent.putExtra(TERMUX_SERVICE.EXTRA_RUNNER, executionCommand.runner); // Runner extra will be prioritized over background extra
         executionIntent.putExtra(TERMUX_SERVICE.EXTRA_BACKGROUND, Runner.APP_SHELL.getName().equals(executionCommand.runner)); // Backward compatibility for runner
         executionIntent.putExtra(TERMUX_SERVICE.EXTRA_PLUGIN_API_HELP, context.getString(R.string.plugin_api_help, TermuxConstants.TERMUX_WIDGET_GITHUB_REPO_URL));
@@ -351,6 +358,39 @@ public final class TermuxWidgetProvider extends AppWidgetProvider {
             Logger.logErrorAndShowToast(context, logTag, message + ": " + e.getMessage());
             Logger.logStackTraceWithMessage(logTag, message, e);
         }
+    }
+
+    /**
+     * Returns the fully-qualified class name of the terminal app's TermuxService as it is actually
+     * installed on device.
+     *
+     * <p>{@link TermuxConstants.TERMUX_APP#TERMUX_SERVICE_NAME} is derived from
+     * {@link TermuxConstants#TERMUX_PACKAGE_NAME}. On stock Termux the applicationId and the manifest
+     * namespace are identical ({@code com.termux}), so the derived name is correct. nix-on-droid,
+     * however, sets the applicationId to {@code com.termux.nix} (via {@code applicationIdSuffix}) while
+     * keeping the manifest {@code package}/namespace as {@code com.termux}. The service class is
+     * therefore installed as {@code com.termux.app.TermuxService}, and the derived
+     * {@code com.termux.nix.app.TermuxService} does not exist, causing "service not found" and the
+     * shortcut silently doing nothing.
+     *
+     * <p>Detect this case: if the derived service class name starts with the package name but the
+     * package name has an extra segment beyond the base {@code com.termux} namespace, rewrite the class
+     * name's package prefix back to the base namespace.
+     */
+    private static String getTermuxServiceClassName() {
+        final String serviceClassName = TermuxConstants.TERMUX_APP.TERMUX_SERVICE_NAME;
+        final String packageName = TermuxConstants.TERMUX_PACKAGE_NAME;
+        // The manifest namespace / Java package that the terminal app's classes actually live in.
+        final String classNamespace = "com.termux";
+
+        // Only rewrite when the terminal app's applicationId differs from its class namespace
+        // (e.g. nix-on-droid: applicationId "com.termux.nix", namespace "com.termux") and the derived
+        // class name was built from that applicationId.
+        if (!packageName.equals(classNamespace)
+                && serviceClassName.startsWith(packageName + ".")) {
+            return classNamespace + serviceClassName.substring(packageName.length());
+        }
+        return serviceClassName;
     }
 
 }
