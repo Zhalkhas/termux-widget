@@ -78,7 +78,9 @@ jobs:
         # with backoff so the subsequent Gradle resolve hits a ready artifact.
         run: |
           set -uo pipefail
-          POM="https://jitpack.io/com/github/${NIX_ON_DROID_APP_REPO/\//.}/termux-shared/${NIX_ON_DROID_APP_REF}/termux-shared-${NIX_ON_DROID_APP_REF}.pom"
+          # JitPack path uses org/repo as path segments (slash preserved):
+          # https://jitpack.io/com/github/<org>/<repo>/<artifact>/<version>/...
+          POM="https://jitpack.io/com/github/${NIX_ON_DROID_APP_REPO}/termux-shared/${NIX_ON_DROID_APP_REF}/termux-shared-${NIX_ON_DROID_APP_REF}.pom"
           echo "Warming: $POM"
           for i in $(seq 1 40); do
             code="$(curl -sSL -o /dev/null -w '%{http_code}' "$POM" || echo 000)"
