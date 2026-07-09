@@ -72,6 +72,23 @@ jobs:
           echo "apksigner=$BUILD_TOOLS_DIR/apksigner" >> "$GITHUB_OUTPUT"
           echo "zipalign=$BUILD_TOOLS_DIR/zipalign" >> "$GITHUB_OUTPUT"
 
+      - name: Warm JitPack termux-shared artifact
+        # JitPack builds the termux-shared artifact on demand the first time it
+        # is requested, returning 429/404 until the build finishes. Poll the POM
+        # with backoff so the subsequent Gradle resolve hits a ready artifact.
+        run: |
+          set -uo pipefail
+          POM="https://jitpack.io/com/github/${NIX_ON_DROID_APP_REPO/\//.}/termux-shared/${NIX_ON_DROID_APP_REF}/termux-shared-${NIX_ON_DROID_APP_REF}.pom"
+          echo "Warming: $POM"
+          for i in $(seq 1 40); do
+            code="$(curl -sSL -o /dev/null -w '%{http_code}' "$POM" || echo 000)"
+            echo "attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then echo "JitPack artifact ready."; exit 0; fi
+            sleep 30
+          done
+          echo "::error::JitPack artifact not ready after polling; last status $code"
+          exit 1
+
       - name: Build Termux:Widget (release)
         working-directory: termux-widget
         env:
