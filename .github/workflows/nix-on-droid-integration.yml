@@ -1,0 +1,176 @@
+name: Nix-on-Droid Integration Build
+
+# Builds the Termux:Widget APK retargeted to nix-on-droid (com.termux.nix) and
+# the nix-on-droid terminal app from source, then signs BOTH with the same
+# release key. Two apps can only share an Android UID (android:sharedUserId) if
+# they carry the same sharedUserId string AND are signed with the same key, so
+# signing both here with one key makes the widget interoperate with the
+# nix-on-droid terminal app.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - 'app/**'
+      - '.github/workflows/nix-on-droid-integration.yml'
+
+env:
+  # Pinned nix-on-droid-app commit. Must match the termux-shared JitPack
+  # coordinate in app/build.gradle so the widget and terminal app agree on
+  # package name, runtime paths and permissions.
+  NIX_ON_DROID_APP_REPO: nix-community/nix-on-droid-app
+  NIX_ON_DROID_APP_REF: e87b6091bffa7b6eafb1b59cc7824f5692441cd0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone termux-widget repository
+        uses: actions/checkout@v4
+        with:
+          path: termux-widget
+
+      - name: Clone nix-on-droid-app repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.NIX_ON_DROID_APP_REPO }}
+          ref: ${{ env.NIX_ON_DROID_APP_REF }}
+          submodules: recursive
+          path: nix-on-droid-app
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode release keystore
+        id: keystore
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SIGNING_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::SIGNING_KEYSTORE_BASE64 secret is not set. See README 'Signing secrets'."
+            exit 1
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          echo "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          echo "keystore_path=$KEYSTORE_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Locate Android build tools
+        id: buildtools
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS_DIR="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)"
+          echo "Using build-tools at $BUILD_TOOLS_DIR"
+          echo "apksigner=$BUILD_TOOLS_DIR/apksigner" >> "$GITHUB_OUTPUT"
+          echo "zipalign=$BUILD_TOOLS_DIR/zipalign" >> "$GITHUB_OUTPUT"
+
+      - name: Build Termux:Widget (release)
+        working-directory: termux-widget
+        env:
+          TERMUX_WIDGET_RELEASE_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore_path }}
+          TERMUX_WIDGET_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          TERMUX_WIDGET_RELEASE_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          TERMUX_WIDGET_RELEASE_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Build nix-on-droid terminal app (debug)
+        working-directory: nix-on-droid-app
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Collect, align and sign APKs with the shared key
+        id: sign
+        env:
+          APKSIGNER: ${{ steps.buildtools.outputs.apksigner }}
+          ZIPALIGN: ${{ steps.buildtools.outputs.zipalign }}
+          KEYSTORE_PATH: ${{ steps.keystore.outputs.keystore_path }}
+          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          OUT_DIR="$RUNNER_TEMP/signed-apks"
+          mkdir -p "$OUT_DIR"
+
+          # sign_apk <input-apk> <output-apk>
+          # Strips any existing signature by re-aligning, then signs with the
+          # shared release key. apksigner sign is idempotent w.r.t. old v1/v2/v3
+          # signatures (it replaces them), so this works for the already-signed
+          # widget release APK and the debug-signed nix-on-droid APK alike.
+          sign_apk() {
+            local input="$1" output="$2" aligned
+            aligned="$RUNNER_TEMP/$(basename "$output" .apk)-aligned.apk"
+            "$ZIPALIGN" -f -p 4 "$input" "$aligned"
+            "$APKSIGNER" sign \
+              --ks "$KEYSTORE_PATH" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --out "$output" \
+              "$aligned"
+            "$APKSIGNER" verify --verbose "$output"
+          }
+
+          WIDGET_APK="$(find termux-widget/app/build/outputs/apk/release -name '*.apk' | head -n 1)"
+          NOD_APK="$(find nix-on-droid-app/app/build/outputs/apk -name '*.apk' | head -n 1)"
+
+          if [ -z "$WIDGET_APK" ]; then echo "::error::widget APK not found"; exit 1; fi
+          if [ -z "$NOD_APK" ]; then echo "::error::nix-on-droid APK not found"; exit 1; fi
+
+          echo "Widget APK:       $WIDGET_APK"
+          echo "Nix-on-droid APK: $NOD_APK"
+
+          sign_apk "$WIDGET_APK" "$OUT_DIR/termux-nix-widget-release.apk"
+          sign_apk "$NOD_APK" "$OUT_DIR/nix-on-droid-release.apk"
+
+          echo "out_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Verify both APKs share the same signing certificate
+        env:
+          APKSIGNER: ${{ steps.buildtools.outputs.apksigner }}
+          OUT_DIR: ${{ steps.sign.outputs.out_dir }}
+        run: |
+          set -euo pipefail
+          cert_sha() {
+            "$APKSIGNER" verify --print-certs "$1" \
+              | grep -i 'SHA-256 digest' | head -n 1 | awk '{print $NF}'
+          }
+          WIDGET_CERT="$(cert_sha "$OUT_DIR/termux-nix-widget-release.apk")"
+          NOD_CERT="$(cert_sha "$OUT_DIR/nix-on-droid-release.apk")"
+          echo "Widget cert SHA-256:       $WIDGET_CERT"
+          echo "Nix-on-droid cert SHA-256: $NOD_CERT"
+          if [ -z "$WIDGET_CERT" ] || [ "$WIDGET_CERT" != "$NOD_CERT" ]; then
+            echo "::error::Signing certificates differ; apps will NOT be able to share a UID."
+            exit 1
+          fi
+          echo "Both APKs are signed with the same certificate."
+
+      - name: Generate checksums
+        env:
+          OUT_DIR: ${{ steps.sign.outputs.out_dir }}
+        run: |
+          set -euo pipefail
+          cd "$OUT_DIR"
+          sha256sum *.apk > checksums-sha256.txt
+          cat checksums-sha256.txt
+
+      - name: Upload signed APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: nix-on-droid-integration-apks
+          path: |
+            ${{ steps.sign.outputs.out_dir }}/*.apk
+            ${{ steps.sign.outputs.out_dir }}/checksums-sha256.txt

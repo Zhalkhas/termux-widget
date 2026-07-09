@@ -15,6 +15,68 @@ A [Termux] plugin app to run scripts in Termux with launcher shortcuts and widge
 - [Worthy Of Note](#Worthy-Of-Note)
 - [For Maintainers and Contributors](#For-Maintainers-and-Contributors)
 - [Forking](#Forking)
+- [Nix-on-Droid Integration](#Nix-on-Droid-Integration)
+##
+
+
+
+### Nix-on-Droid Integration
+
+This fork is retargeted to work with [nix-on-droid](https://github.com/nix-community/nix-on-droid)
+(terminal app package `com.termux.nix`) instead of the upstream Termux app.
+
+What changed:
+
+- The widget `applicationId`/`namespace` is `com.termux.nix.widget` so it can be
+  installed alongside the original `com.termux.widget`.
+- The manifest `android:sharedUserId` and runtime package name are `com.termux.nix`,
+  and `termux-shared` is pulled from the
+  [`nix-community/nix-on-droid-app`](https://github.com/nix-community/nix-on-droid-app)
+  fork via JitPack (pinned to a commit), so all runtime paths point at
+  `/data/data/com.termux.nix/files/...`.
+
+Two Android apps can only share a UID (and therefore data/permissions) if they
+both declare the same `android:sharedUserId` **and** are signed with the same
+key. Because the widget and the nix-on-droid terminal app are distributed
+separately, the [`Nix-on-Droid Integration Build`](.github/workflows/nix-on-droid-integration.yml)
+workflow builds both from source and signs both with the same release key, then
+verifies their signing certificates match.
+
+#### Signing secrets
+
+The integration workflow requires the following repository secrets:
+
+| Secret | Description |
+| --- | --- |
+| `SIGNING_KEYSTORE_BASE64` | Base64-encoded JKS/PKCS12 keystore used to sign both APKs. |
+| `SIGNING_KEYSTORE_PASSWORD` | Keystore (store) password. |
+| `SIGNING_KEY_ALIAS` | Alias of the key inside the keystore. |
+| `SIGNING_KEY_PASSWORD` | Password of the key (often the same as the store password). |
+
+To generate a keystore and populate the secrets locally with the GitHub CLI:
+
+```bash
+# 1. Generate a keystore (RSA 2048, 10000 days validity)
+keytool -genkeypair -v \
+  -keystore release.jks \
+  -alias termux-nix \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass "<STORE_PASSWORD>" -keypass "<KEY_PASSWORD>" \
+  -dname "CN=Termux Nix Widget, OU=, O=, L=, S=, C="
+
+# 2. Set the secrets (run from the repo directory)
+gh secret set SIGNING_KEYSTORE_BASE64   < <(base64 -i release.jks)
+gh secret set SIGNING_KEYSTORE_PASSWORD --body "<STORE_PASSWORD>"
+gh secret set SIGNING_KEY_ALIAS         --body "termux-nix"
+gh secret set SIGNING_KEY_PASSWORD      --body "<KEY_PASSWORD>"
+```
+
+> **Back up `release.jks` and its passwords somewhere safe.** If you lose the
+> keystore you will not be able to publish signature-compatible updates, and
+> users would have to uninstall and reinstall both apps.
+
+The signed APKs (`termux-nix-widget-release.apk` and `nix-on-droid-release.apk`)
+plus a `checksums-sha256.txt` are uploaded as workflow artifacts.
 ##
 
 

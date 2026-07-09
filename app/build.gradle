@@ -1,14 +1,14 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.termux.widget"
+    namespace "com.termux.nix.widget"
 
     compileSdk project.properties.compileSdkVersion.toInteger()
     def appVersionName = System.getenv("TERMUX_WIDGET_APP__BUILD__APP_VERSION_NAME") ?: ""
     def apkVersionTag = System.getenv("TERMUX_WIDGET_APP__BUILD__APK_VERSION_TAG") ?: ""
 
     defaultConfig {
-        applicationId "com.termux.widget"
+        applicationId "com.termux.nix.widget"
         minSdk project.properties.minSdkVersion.toInteger()
         targetSdk project.properties.targetSdkVersion.toInteger()
         versionCode 1001
@@ -17,9 +17,13 @@ android {
         if (appVersionName) versionName = appVersionName
         validateVersionName(versionName)
 
-        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
-        manifestPlaceholders.TERMUX_APP_NAME = "Termux"
-        manifestPlaceholders.TERMUX_WIDGET_APP_NAME = "Termux:Widget"
+        // Retargeted to nix-on-droid (com.termux.nix). This value drives the
+        // manifest android:sharedUserId and the ReportActivity package name, so
+        // the widget shares a UID with the nix-on-droid terminal app. Sharing a
+        // UID additionally requires both apps to be signed with the same key.
+        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux.nix"
+        manifestPlaceholders.TERMUX_APP_NAME = "Nix"
+        manifestPlaceholders.TERMUX_WIDGET_APP_NAME = "Nix:Widget"
     }
 
     signingConfigs {
@@ -29,6 +33,20 @@ android {
             storePassword 'xrj45yWGLbsO7W0v'
             keyPassword 'xrj45yWGLbsO7W0v'
         }
+
+        // Release signing is configured from environment variables so the CI
+        // workflow can sign the widget with the same key used to (re)sign the
+        // nix-on-droid terminal app. Falls back gracefully when unset so local
+        // debug builds keep working without any release keystore present.
+        release {
+            def storeFilePath = System.getenv("TERMUX_WIDGET_RELEASE_KEYSTORE_FILE")
+            if (storeFilePath) {
+                storeFile file(storeFilePath)
+                storePassword System.getenv("TERMUX_WIDGET_RELEASE_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("TERMUX_WIDGET_RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("TERMUX_WIDGET_RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -36,6 +54,12 @@ android {
             minifyEnabled true
             shrinkResources false // Reproducible builds
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+
+            // Only apply the release signingConfig when a keystore is provided
+            // via environment (CI). Otherwise the release APK is left unsigned.
+            if (System.getenv("TERMUX_WIDGET_RELEASE_KEYSTORE_FILE")) {
+                signingConfig signingConfigs.release
+            }
         }
 
         debug {
@@ -75,10 +99,14 @@ dependencies {
     implementation "com.google.android.material:material:1.12.0"
     implementation "com.google.guava:guava:24.1-jre"
 
-    implementation 'com.termux.termux-app:termux-shared:8aca6dbbf4'
-    // Use if below libraries are published locally by termux-app with `./gradlew publishReleasePublicationToMavenLocal` and used with `mavenLocal()`.
-    // If updates are done, republish there and sync project with gradle files here
-    // https://github.com/termux/termux-app/wiki/Termux-Libraries
+    // termux-shared from the nix-on-droid-app fork (nix-community/nix-on-droid-app).
+    // Its TermuxConstants is retargeted to com.termux.nix, so runtime paths
+    // (/data/data/com.termux.nix/...), package name and permissions match the
+    // nix-on-droid terminal app. Built on demand by JitPack, pinned to a commit
+    // for reproducibility.
+    implementation 'com.github.nix-community.nix-on-droid-app:termux-shared:e87b6091bffa7b6eafb1b59cc7824f5692441cd0'
+    // Upstream (com.termux) termux-shared, kept for reference:
+    //implementation 'com.termux.termux-app:termux-shared:8aca6dbbf4'
     //implementation "com.termux:termux-shared:0.118.0"
 
     implementation "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"

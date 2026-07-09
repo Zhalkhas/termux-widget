@@ -6,3 +6,8 @@ release/
 
 local.properties
 github.properties
+
+# Release signing keystores — never commit these
+release.jks
+*.keystore
+release.jks.base64

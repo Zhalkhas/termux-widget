@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <!DOCTYPE resources [
-    <!ENTITY TERMUX_PACKAGE_NAME "com.termux">
-    <!ENTITY TERMUX_APP_NAME "Termux">
-    <!ENTITY TERMUX_WIDGET_APP_NAME "Termux:Widget">
+    <!ENTITY TERMUX_PACKAGE_NAME "com.termux.nix">
+    <!ENTITY TERMUX_APP_NAME "Nix">
+    <!ENTITY TERMUX_WIDGET_APP_NAME "Nix:Widget">
     <!ENTITY TERMUX_SHORTCUT_SCRIPTS_DIR_PATH_SHORT "~/.shortcuts/">
     <!ENTITY TERMUX_SHORTCUT_SCRIPT_ICONS_DIR_PATH_SHORT "~/.shortcuts/icons">
     ]>
