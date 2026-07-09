@@ -1,7 +1,11 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.termux.nix.widget"
+    // Keep the compile-time namespace as the original package so the generated
+    // R/BuildConfig classes and the existing Java sources (package
+    // com.termux.widget, import com.termux.widget.R) still resolve. The install
+    // identity is set separately via applicationId below.
+    namespace "com.termux.widget"
 
     compileSdk project.properties.compileSdkVersion.toInteger()
     def appVersionName = System.getenv("TERMUX_WIDGET_APP__BUILD__APP_VERSION_NAME") ?: ""
