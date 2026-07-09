@@ -9,12 +9,20 @@ name: Nix-on-Droid Integration Build
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Git tag to publish the signed APKs under (e.g. v0.15.0). Leave empty to only upload build artifacts.'
+        required: false
+        default: ''
   push:
     branches:
       - master
     paths:
       - 'app/**'
       - '.github/workflows/nix-on-droid-integration.yml'
+
+permissions:
+  contents: write
 
 env:
   # Pinned nix-on-droid-app commit. Must match the termux-shared JitPack
@@ -192,4 +200,20 @@ jobs:
           name: nix-on-droid-integration-apks
           path: |
             ${{ steps.sign.outputs.out_dir }}/*.apk
+            ${{ steps.sign.outputs.out_dir }}/checksums-sha256.txt
+
+      - name: Publish signed APKs to GitHub Release
+        # Only publishes when a release tag was supplied via workflow_dispatch.
+        # Creates the release (and tag) if it does not exist, then uploads both
+        # signed APKs and the checksums file as release assets.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: ${{ inputs.release_tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.sign.outputs.out_dir }}/termux-nix-widget-release.apk
+            ${{ steps.sign.outputs.out_dir }}/nix-on-droid-release.apk
             ${{ steps.sign.outputs.out_dir }}/checksums-sha256.txt
